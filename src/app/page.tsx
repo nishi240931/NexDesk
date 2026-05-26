@@ -1,65 +1,532 @@
-import Image from "next/image";
+'use client';
 
-export default function Home() {
+import {
+  Building2,
+  Users,
+  CreditCard,
+  Armchair,
+  TrendingUp,
+  TrendingDown,
+  CalendarClock,
+  FileText,
+} from 'lucide-react';
+import {
+  AreaChart,
+  Area,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+} from 'recharts';
+
+import AppShell from '@/components/app-shell';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+
+import {
+  revenueChartData,
+  occupancyChartData,
+  leads,
+  bookings,
+} from '@/lib/mock-data';
+
+const dashboardStats = {
+  totalSeats: 360,
+  occupiedSeats: 276,
+  totalOccupancy: 77,
+  monthlyRevenue: 6810000,
+  revenueChange: 12.4,
+  activeClients: 23,
+  clientsChange: 4,
+  availableSeats: 84,
+  upcomingRenewals: 8,
+  urgentRenewals: 3,
+  pendingInvoices: 5,
+  pendingInvoiceAmount: 185000,
+};
+
+const leadStatusColors: Record<string, string> = {
+  new: 'bg-blue-500/15 text-blue-400 border-blue-500/20',
+  contacted: 'bg-yellow-500/15 text-yellow-400 border-yellow-500/20',
+  qualified: 'bg-purple-500/15 text-purple-400 border-purple-500/20',
+  proposal: 'bg-cyan-500/15 text-cyan-400 border-cyan-500/20',
+  negotiation: 'bg-orange-500/15 text-orange-400 border-orange-500/20',
+  won: 'bg-green-500/15 text-green-400 border-green-500/20',
+  lost: 'bg-red-500/15 text-red-400 border-red-500/20',
+};
+
+const bookingStatusColors: Record<string, string> = {
+  confirmed: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/20',
+  pending: 'bg-amber-500/15 text-amber-400 border-amber-500/20',
+  cancelled: 'bg-red-500/15 text-red-400 border-red-500/20',
+};
+
+// ─── Helpers ─────────────────────────────────────────────────────────
+
+function formatCurrency(amount: number): string {
+  if (amount >= 10000000) return `₹${(amount / 10000000).toFixed(2)} Cr`;
+  if (amount >= 100000) return `₹${(amount / 100000).toFixed(2)} L`;
+  return `₹${amount.toLocaleString('en-IN')}`;
+}
+
+function formatChartCurrency(value: number): string {
+  if (value >= 100000) return `${(value / 100000).toFixed(1)}L`;
+  return `${(value / 1000).toFixed(0)}K`;
+}
+
+// ─── Custom Tooltip Components ───────────────────────────────────────
+
+function RevenueTooltip({
+  active,
+  payload,
+  label,
+}: {
+  active?: boolean;
+  payload?: Array<{ value: number }>;
+  label?: string;
+}) {
+  if (!active || !payload?.length) return null;
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
+    <div className="rounded-lg border border-white/10 bg-slate-900/95 px-3 py-2 shadow-xl backdrop-blur-md">
+      <p className="text-xs font-medium text-slate-400">{label}</p>
+      <p className="text-sm font-semibold text-white">
+        {formatCurrency(payload[0].value)}
+      </p>
+    </div>
+  );
+}
+
+function OccupancyTooltip({
+  active,
+  payload,
+  label,
+}: {
+  active?: boolean;
+  payload?: Array<{ value: number; dataKey: string }>;
+  label?: string;
+}) {
+  if (!active || !payload?.length) return null;
+  const occupied = payload.find((p) => p.dataKey === 'occupied')?.value ?? 0;
+  const total = payload.find((p) => p.dataKey === 'total')?.value ?? 0;
+  const pct = total > 0 ? Math.round((occupied / total) * 100) : 0;
+  return (
+    <div className="rounded-lg border border-white/10 bg-slate-900/95 px-3 py-2 shadow-xl backdrop-blur-md">
+      <p className="text-xs font-medium text-slate-400">{label}</p>
+      <p className="text-sm font-semibold text-cyan-400">
+        {occupied}/{total} seats ({pct}%)
+      </p>
+    </div>
+  );
+}
+
+// ─── Stats Card ──────────────────────────────────────────────────────
+
+function StatCard({
+  icon: Icon,
+  iconBg,
+  label,
+  value,
+  sub,
+  trend,
+  trendPositive,
+  children,
+}: {
+  icon: React.ElementType;
+  iconBg: string;
+  label: string;
+  value: string;
+  sub?: string;
+  trend?: string;
+  trendPositive?: boolean;
+  children?: React.ReactNode;
+}) {
+  return (
+    <Card className="relative overflow-hidden border-0 bg-slate-900/60 ring-1 ring-white/[0.06] backdrop-blur-sm">
+      {/* Subtle top gradient accent */}
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-indigo-500/40 to-transparent" />
+      <CardContent className="pt-1">
+        <div className="flex items-start justify-between">
+          <div className="space-y-2">
+            <p className="text-xs font-medium tracking-wide text-slate-400 uppercase">
+              {label}
+            </p>
+            <p className="text-2xl font-bold tracking-tight text-white">
+              {value}
+            </p>
+            {sub && (
+              <p className="text-xs text-slate-500">{sub}</p>
+            )}
+            {trend && (
+              <div className="flex items-center gap-1">
+                {trendPositive ? (
+                  <TrendingUp className="size-3.5 text-emerald-400" />
+                ) : (
+                  <TrendingDown className="size-3.5 text-red-400" />
+                )}
+                <span
+                  className={`text-xs font-medium ${
+                    trendPositive ? 'text-emerald-400' : 'text-red-400'
+                  }`}
+                >
+                  {trend}
+                </span>
+                <span className="text-xs text-slate-500">vs last month</span>
+              </div>
+            )}
+          </div>
+          <div
+            className={`flex size-10 shrink-0 items-center justify-center rounded-xl ${iconBg}`}
+          >
+            <Icon className="size-5 text-white" />
+          </div>
+        </div>
+        {children}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─── Dashboard Page ──────────────────────────────────────────────────
+
+export default function DashboardPage() {
+  const recentLeads = leads.slice(0, 5);
+  const recentBookings = bookings.slice(0, 5);
+
+  return (
+    <AppShell>
+      <div className="space-y-6">
+        {/* Page header */}
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-white">
+            Dashboard
           </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+          <p className="mt-1 text-sm text-slate-400">
+            Welcome back — here&apos;s what&apos;s happening across your centers.
           </p>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+
+        {/* ─── Stats Row 1: Main Metrics ─────────────────────────── */}
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          {/* Occupancy */}
+          <StatCard
+            icon={Building2}
+            iconBg="bg-indigo-500/20"
+            label="Total Occupancy"
+            value={`${dashboardStats.totalOccupancy}%`}
+            sub={`${dashboardStats.occupiedSeats} of ${dashboardStats.totalSeats} seats`}
           >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+            <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-indigo-400 transition-all"
+                style={{ width: `${dashboardStats.totalOccupancy}%` }}
+              />
+            </div>
+          </StatCard>
+
+          {/* Revenue */}
+          <StatCard
+            icon={CreditCard}
+            iconBg="bg-cyan-500/20"
+            label="Monthly Revenue"
+            value={formatCurrency(dashboardStats.monthlyRevenue)}
+            trend={`+${dashboardStats.revenueChange}%`}
+            trendPositive
+          />
+
+          {/* Active Clients */}
+          <StatCard
+            icon={Users}
+            iconBg="bg-emerald-500/20"
+            label="Active Clients"
+            value={dashboardStats.activeClients.toString()}
+            trend={`+${dashboardStats.clientsChange}`}
+            trendPositive
+          />
+
+          {/* Available Seats */}
+          <StatCard
+            icon={Armchair}
+            iconBg="bg-amber-500/20"
+            label="Available Seats"
+            value={dashboardStats.availableSeats.toString()}
+            sub={`out of ${dashboardStats.totalSeats} total`}
+          />
         </div>
-      </main>
-    </div>
+
+        {/* ─── Stats Row 2: Renewals & Invoices ──────────────────── */}
+        <div className="grid gap-4 sm:grid-cols-2">
+          {/* Upcoming Renewals */}
+          <Card className="border-0 bg-slate-900/60 ring-1 ring-white/[0.06] backdrop-blur-sm">
+            <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-500/30 to-transparent" />
+            <CardContent className="pt-1">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="flex size-10 items-center justify-center rounded-xl bg-orange-500/20">
+                    <CalendarClock className="size-5 text-orange-400" />
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium tracking-wide text-slate-400 uppercase">
+                      Upcoming Renewals
+                    </p>
+                    <p className="text-2xl font-bold text-white">
+                      {dashboardStats.upcomingRenewals}
+                    </p>
+                  </div>
+                </div>
+                <Badge className="border border-red-500/30 bg-red-500/15 text-red-400 hover:bg-red-500/15">
+                  {dashboardStats.urgentRenewals} urgent
+                </Badge>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Pending Invoices */}
+          <Card className="border-0 bg-slate-900/60 ring-1 ring-white/[0.06] backdrop-blur-sm">
+            <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-500/30 to-transparent" />
+            <CardContent className="pt-1">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="flex size-10 items-center justify-center rounded-xl bg-violet-500/20">
+                    <FileText className="size-5 text-violet-400" />
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium tracking-wide text-slate-400 uppercase">
+                      Pending Invoices
+                    </p>
+                    <p className="text-2xl font-bold text-white">
+                      {dashboardStats.pendingInvoices}
+                    </p>
+                  </div>
+                </div>
+                <p className="text-sm font-medium text-slate-300">
+                  {formatCurrency(dashboardStats.pendingInvoiceAmount)}{' '}
+                  <span className="text-slate-500">total</span>
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* ─── Charts Row ────────────────────────────────────────── */}
+        <div className="grid gap-4 lg:grid-cols-2">
+          {/* Revenue Trend */}
+          <Card className="border-0 bg-slate-900/60 ring-1 ring-white/[0.06] backdrop-blur-sm">
+            <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-indigo-500/40 to-transparent" />
+            <CardHeader>
+              <CardTitle className="text-white">Revenue Trend</CardTitle>
+              <CardDescription>Monthly revenue over the last 12 months</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="h-[280px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart
+                    data={revenueChartData}
+                    margin={{ top: 4, right: 4, left: -10, bottom: 0 }}
+                  >
+                    <defs>
+                      <linearGradient id="revenueGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#6366f1" stopOpacity={0.3} />
+                        <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid
+                      strokeDasharray="3 3"
+                      stroke="rgba(255,255,255,0.04)"
+                      vertical={false}
+                    />
+                    <XAxis
+                      dataKey="month"
+                      tick={{ fill: '#64748b', fontSize: 11 }}
+                      tickLine={false}
+                      axisLine={{ stroke: 'rgba(255,255,255,0.06)' }}
+                    />
+                    <YAxis
+                      tick={{ fill: '#64748b', fontSize: 11 }}
+                      tickLine={false}
+                      axisLine={false}
+                      tickFormatter={formatChartCurrency}
+                    />
+                    <Tooltip content={<RevenueTooltip />} />
+                    <Area
+                      type="monotone"
+                      dataKey="revenue"
+                      stroke="#6366f1"
+                      strokeWidth={2}
+                      fill="url(#revenueGradient)"
+                      dot={false}
+                      activeDot={{
+                        r: 5,
+                        stroke: '#6366f1',
+                        strokeWidth: 2,
+                        fill: '#1e1b4b',
+                      }}
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Occupancy by Center */}
+          <Card className="border-0 bg-slate-900/60 ring-1 ring-white/[0.06] backdrop-blur-sm">
+            <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-500/30 to-transparent" />
+            <CardHeader>
+              <CardTitle className="text-white">Occupancy by Center</CardTitle>
+              <CardDescription>Current seat utilisation per location</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="h-[280px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    data={occupancyChartData}
+                    margin={{ top: 4, right: 4, left: -10, bottom: 0 }}
+                  >
+                    <CartesianGrid
+                      strokeDasharray="3 3"
+                      stroke="rgba(255,255,255,0.04)"
+                      vertical={false}
+                    />
+                    <XAxis
+                      dataKey="center"
+                      tick={{ fill: '#64748b', fontSize: 11 }}
+                      tickLine={false}
+                      axisLine={{ stroke: 'rgba(255,255,255,0.06)' }}
+                    />
+                    <YAxis
+                      tick={{ fill: '#64748b', fontSize: 11 }}
+                      tickLine={false}
+                      axisLine={false}
+                    />
+                    <Tooltip content={<OccupancyTooltip />} />
+                    <Bar
+                      dataKey="total"
+                      fill="rgba(255,255,255,0.06)"
+                      radius={[4, 4, 0, 0]}
+                      barSize={28}
+                    />
+                    <Bar
+                      dataKey="occupied"
+                      fill="#06b6d4"
+                      radius={[4, 4, 0, 0]}
+                      barSize={28}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* ─── Tables Row ────────────────────────────────────────── */}
+        <div className="grid gap-4 lg:grid-cols-2">
+          {/* Recent Leads */}
+          <Card className="border-0 bg-slate-900/60 ring-1 ring-white/[0.06] backdrop-blur-sm">
+            <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-indigo-500/40 to-transparent" />
+            <CardHeader>
+              <CardTitle className="text-white">Recent Leads</CardTitle>
+              <CardDescription>Latest enquiries across all centers</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow className="border-white/[0.06] hover:bg-transparent">
+                    <TableHead className="text-slate-400">Name</TableHead>
+                    <TableHead className="text-slate-400">Company</TableHead>
+                    <TableHead className="text-slate-400">Value</TableHead>
+                    <TableHead className="text-slate-400">Status</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {recentLeads.map((lead) => (
+                    <TableRow
+                      key={lead.id}
+                      className="border-white/[0.04] hover:bg-white/[0.02]"
+                    >
+                      <TableCell className="font-medium text-white">
+                        {lead.name}
+                      </TableCell>
+                      <TableCell className="text-slate-400">
+                        {lead.company}
+                      </TableCell>
+                      <TableCell className="text-slate-300">
+                        {formatCurrency(lead.value)}
+                      </TableCell>
+                      <TableCell>
+                        <span
+                          className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium capitalize ${
+                            leadStatusColors[lead.status]
+                          }`}
+                        >
+                          {lead.status}
+                        </span>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+
+          {/* Recent Bookings */}
+          <Card className="border-0 bg-slate-900/60 ring-1 ring-white/[0.06] backdrop-blur-sm">
+            <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-500/30 to-transparent" />
+            <CardHeader>
+              <CardTitle className="text-white">Recent Bookings</CardTitle>
+              <CardDescription>Latest bookings and reservations</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow className="border-white/[0.06] hover:bg-transparent">
+                    <TableHead className="text-slate-400">Client</TableHead>
+                    <TableHead className="text-slate-400">Plan</TableHead>
+                    <TableHead className="text-slate-400">Amount</TableHead>
+                    <TableHead className="text-slate-400">Status</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {recentBookings.map((booking) => (
+                    <TableRow
+                      key={booking.id}
+                      className="border-white/[0.04] hover:bg-white/[0.02]"
+                    >
+                      <TableCell className="font-medium text-white">
+                        {booking.clientName}
+                      </TableCell>
+                      <TableCell className="text-slate-400">
+                        {booking.plan}
+                      </TableCell>
+                      <TableCell className="text-slate-300">
+                        {formatCurrency(booking.amount)}
+                      </TableCell>
+                      <TableCell>
+                        <span
+                          className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium capitalize ${
+                            bookingStatusColors[booking.status]
+                          }`}
+                        >
+                          {booking.status}
+                        </span>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    </AppShell>
   );
 }
