@@ -80,7 +80,7 @@ http://localhost:3000
 ## Demo
 
 Live URL:
-(Add your deployed link)
+https://nex-desk-eight.vercel.app/
 
 ---
 
