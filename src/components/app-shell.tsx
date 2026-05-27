@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import {
   LayoutDashboard,
   Users,
@@ -23,6 +23,7 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { getCurrentUser, logout, syncAuthState } from '@/lib/auth';
 
 const navItems = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -35,7 +36,32 @@ const navItems = [
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [userEmail, setUserEmail] = useState<string>('user@nexdesk.co');
+  const [userInitials, setUserInitials] = useState<string>('ND');
+
+  useEffect(() => {
+    // Sync auth session state on mount
+    syncAuthState();
+
+    async function loadUser() {
+      const user = await getCurrentUser();
+      if (user) {
+        setUserEmail(user.email || 'user@nexdesk.co');
+        const emailPart = user.email ? user.email.split('@')[0] : '';
+        const initials = emailPart ? emailPart.slice(0, 2).toUpperCase() : 'ND';
+        setUserInitials(initials);
+      }
+    }
+    loadUser();
+  }, []);
+
+  async function handleLogout() {
+    await logout();
+    router.push('/login');
+    router.refresh();
+  }
 
   return (
     <div className="flex h-screen bg-slate-950 text-slate-100 overflow-hidden">
@@ -111,14 +137,19 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           <div className="flex items-center gap-3 rounded-lg px-3 py-2.5">
             <Avatar className="h-8 w-8">
               <AvatarFallback className="bg-gradient-to-br from-indigo-600 to-cyan-500 text-xs text-white">
-                NR
+                {userInitials}
               </AvatarFallback>
             </Avatar>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-slate-200 truncate">Nishitha Reddy</p>
-              <p className="text-xs text-slate-500 truncate">Admin</p>
+              <p className="text-sm font-medium text-slate-200 truncate">{userEmail.split('@')[0]}</p>
+              <p className="text-xs text-slate-500 truncate">{userEmail}</p>
             </div>
-            <Button variant="ghost" size="icon-xs" className="text-slate-500 hover:text-slate-300">
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              className="text-slate-500 hover:text-slate-300"
+              onClick={handleLogout}
+            >
               <LogOut className="h-3.5 w-3.5" />
             </Button>
           </div>
@@ -162,10 +193,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             <div className="hidden items-center gap-2 rounded-lg border border-slate-800/60 bg-slate-900/50 px-3 py-1.5 lg:flex">
               <Avatar className="h-6 w-6">
                 <AvatarFallback className="bg-gradient-to-br from-indigo-600 to-cyan-500 text-[10px] text-white">
-                  NR
+                  {userInitials}
                 </AvatarFallback>
               </Avatar>
-              <span className="text-sm font-medium text-slate-300">Nishitha</span>
+              <span className="text-sm font-medium text-slate-300 truncate max-w-[100px]">
+                {userEmail.split('@')[0]}
+              </span>
               <ChevronDown className="h-3.5 w-3.5 text-slate-500" />
             </div>
           </div>
