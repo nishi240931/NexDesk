@@ -1,12 +1,13 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import AppShell from '@/components/app-shell';
 import {
   bookings as allBookings,
   centers,
 } from '@/lib/mock-data';
 import { Booking, BookingStatus, PlanType } from '@/types';
+import supabase, { toCamelCase, toSnakeCase } from '@/lib/supabase';
 
 const bookingStatusColors: Record<BookingStatus, string> = {
   confirmed: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/20',
@@ -86,11 +87,30 @@ const MONTH_NAMES = [
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 export default function BookingsPage() {
-  const [bookings, setBookings] = useState<Booking[]>(allBookings);
+  const [bookings, setBookings] = useState<Booking[]>([]);
+  const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('all');
   const [newBookingOpen, setNewBookingOpen] = useState(false);
   const [calYear, setCalYear] = useState(2026);
   const [calMonth, setCalMonth] = useState(4); // May = 4 (0-indexed)
+
+  useEffect(() => {
+    async function loadBookings() {
+      try {
+        const { data, error } = await supabase
+          .from('bookings')
+          .select('*')
+          .order('created_at', { ascending: false });
+        if (error) throw error;
+        setBookings(toCamelCase(data || []));
+      } catch (err) {
+        console.error('Error fetching bookings:', err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadBookings();
+  }, []);
 
   // Stats
   const totalBookings = bookings.length;
@@ -100,14 +120,25 @@ export default function BookingsPage() {
     .filter((b) => b.status !== 'cancelled')
     .reduce((sum, b) => sum + b.amount, 0);
 
-  function handleAddBooking(newBooking: Omit<Booking, 'id' | 'createdAt' | 'status'>) {
+  async function handleAddBooking(newBooking: Omit<Booking, 'id' | 'createdAt' | 'status'>) {
     const booking: Booking = {
       ...newBooking,
-      id: `bk-${String(bookings.length + 1).padStart(3, '0')}`,
+      id: `bk-${Date.now().toString().slice(-4)}`,
       status: 'confirmed',
       createdAt: new Date().toISOString().split('T')[0],
     };
+    const oldBookings = bookings;
     setBookings((prev) => [booking, ...prev]);
+
+    try {
+      const { error } = await supabase
+        .from('bookings')
+        .insert([toSnakeCase(booking)]);
+      if (error) throw error;
+    } catch (err) {
+      console.error('Error adding booking:', err);
+      setBookings(oldBookings);
+    }
   }
 
   const stats = [
@@ -461,16 +492,11 @@ export default function BookingsPage() {
 /* ── New Booking Dialog ───────────────────────────────────────────── */
 function NewBookingDialog({ onClose, onAdd }: { onClose: () => void; onAdd: (booking: any) => void }) {
   const clientNames = [
-    'Arjun Mehta',
     'Priya Sharma',
     'Rahul Verma',
-    'Sneha Reddy',
-    'Vikram Singh',
-    'Ananya Iyer',
-    'Meera Joshi',
-    'Rohit Bansal',
-    'Deepika Nair',
-    'Pooja Tiwari',
+    'Ananya Reddy',
+    'Vikram Joshi',
+    'Sneha Patel',
   ];
 
   const [clientName, setClientName] = useState(clientNames[0]);
@@ -481,8 +507,15 @@ function NewBookingDialog({ onClose, onAdd }: { onClose: () => void; onAdd: (boo
   const [amount, setAmount] = useState('45000');
 
   function handleSubmit() {
+    const clientMap: Record<string, string> = {
+      'Priya Sharma': 'cli-001',
+      'Rahul Verma': 'cli-002',
+      'Ananya Reddy': 'cli-003',
+      'Vikram Joshi': 'cli-004',
+      'Sneha Patel': 'cli-005',
+    };
     onAdd({
-      clientId: `cli-${String(Math.floor(Math.random() * 100) + 10).padStart(3, '0')}`,
+      clientId: clientMap[clientName] || 'cli-001',
       clientName,
       centerId: centers.find((c) => c.name === centerName)?.id || 'ctr-001',
       centerName,

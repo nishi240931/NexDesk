@@ -32,6 +32,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import supabase, { toCamelCase, toSnakeCase } from '@/lib/supabase';
 
 // --- Types ---
 type RenewalStatus = 'upcoming' | 'due' | 'renewed' | 'expired';
@@ -133,12 +134,43 @@ const statusStyles: Record<RenewalStatus, { className: string; label: string; ic
 
 // --- Component ---
 export default function RenewalsPage() {
-  const [renewals, setRenewals] = React.useState<Renewal[]>(() => generateRenewals());
+  const [renewals, setRenewals] = React.useState<Renewal[]>([]);
+  const [loading, setLoading] = React.useState(true);
   const [renewDialogOpen, setRenewDialogOpen] = React.useState(false);
   const [selectedRenewal, setSelectedRenewal] = React.useState<Renewal | null>(null);
   const [formNewEndDate, setFormNewEndDate] = React.useState('');
   const [formNewAmount, setFormNewAmount] = React.useState('');
   const [formNotes, setFormNotes] = React.useState('');
+
+  React.useEffect(() => {
+    async function loadRenewals() {
+      try {
+        const { data, error } = await supabase
+          .from('renewals')
+          .select('*')
+          .order('days_until_expiry', { ascending: true });
+        if (error) throw error;
+
+        const mapped = toCamelCase(data || []).map((r: any) => ({
+          id: r.id,
+          client: r.clientName,
+          center: r.centerName,
+          plan: r.plan,
+          startDate: r.currentEndDate,
+          endDate: r.renewalDate,
+          amount: Number(r.amount),
+          status: r.status,
+          daysUntilExpiry: r.daysUntilExpiry,
+        }));
+        setRenewals(mapped);
+      } catch (err) {
+        console.error('Error fetching renewals:', err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadRenewals();
+  }, []);
 
   const stats = React.useMemo(() => {
     const today = new Date(2026, 4, 26);
@@ -159,7 +191,6 @@ export default function RenewalsPage() {
 
   function openRenewDialog(renewal: Renewal) {
     setSelectedRenewal(renewal);
-    // Pre-fill new end date: current end date + plan duration
     const currentEnd = new Date(renewal.endDate);
     const duration = renewal.plan.includes('Annual') ? 365 : renewal.plan.includes('Quarterly') ? 90 : 30;
     currentEnd.setDate(currentEnd.getDate() + duration);
@@ -169,9 +200,10 @@ export default function RenewalsPage() {
     setRenewDialogOpen(true);
   }
 
-  function handleRenew() {
+  async function handleRenew() {
     if (!selectedRenewal || !formNewEndDate || !formNewAmount) return;
 
+    const oldRenewals = renewals;
     setRenewals((prev) =>
       prev.map((r) =>
         r.id === selectedRenewal.id
@@ -180,6 +212,22 @@ export default function RenewalsPage() {
       )
     );
     setRenewDialogOpen(false);
+
+    try {
+      const { error } = await supabase
+        .from('renewals')
+        .update({
+          status: 'renewed',
+          renewal_date: formNewEndDate,
+          amount: parseFloat(formNewAmount)
+        })
+        .eq('id', selectedRenewal.id);
+      if (error) throw error;
+    } catch (err) {
+      console.error('Error updating renewal:', err);
+      setRenewals(oldRenewals);
+    }
+
     setSelectedRenewal(null);
   }
 

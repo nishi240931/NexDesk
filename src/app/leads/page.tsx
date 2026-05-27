@@ -1,12 +1,13 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import AppShell from '@/components/app-shell';
 import {
   leads as allLeads,
   centers,
 } from '@/lib/mock-data';
 import { Lead, LeadStatus } from '@/types';
+import supabase, { toCamelCase, toSnakeCase } from '@/lib/supabase';
 
 const leadStatuses: { value: string; label: string }[] = [
   { value: 'new', label: 'New' },
@@ -106,12 +107,31 @@ function formatFullCurrency(value: number): string {
 }
 
 export default function LeadsPage() {
-  const [leads, setLeads] = useState<Lead[]>(allLeads);
+  const [leads, setLeads] = useState<Lead[]>([]);
+  const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [sourceFilter, setSourceFilter] = useState<string>('all');
   const [centerFilter, setCenterFilter] = useState<string>('all');
   const [addDialogOpen, setAddDialogOpen] = useState(false);
+
+  useEffect(() => {
+    async function loadLeads() {
+      try {
+        const { data, error } = await supabase
+          .from('leads')
+          .select('*')
+          .order('created_at', { ascending: false });
+        if (error) throw error;
+        setLeads(toCamelCase(data || []));
+      } catch (err) {
+        console.error('Error fetching leads:', err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadLeads();
+  }, []);
 
   const filteredLeads = useMemo(() => {
     return leads.filter((lead) => {
@@ -149,21 +169,45 @@ export default function LeadsPage() {
       .reduce((sum, l) => sum + l.value, 0);
   }, [leads]);
 
-  function handleStatusChange(leadId: string, newStatus: LeadStatus) {
+  async function handleStatusChange(leadId: string, newStatus: LeadStatus) {
+    const oldLeads = leads;
     setLeads((prev) =>
       prev.map((l) => (l.id === leadId ? { ...l, status: newStatus } : l))
     );
+
+    try {
+      const { error } = await supabase
+        .from('leads')
+        .update({ status: newStatus })
+        .eq('id', leadId);
+      if (error) throw error;
+    } catch (err) {
+      console.error('Error updating lead status:', err);
+      setLeads(oldLeads);
+    }
   }
 
-  function handleAddLead(newLead: Omit<Lead, 'id' | 'createdAt' | 'assignedTo' | 'status'>) {
+  async function handleAddLead(newLead: Omit<Lead, 'id' | 'createdAt' | 'assignedTo' | 'status'>) {
+    const newId = `ld-${Date.now().toString().slice(-4)}`;
     const lead: Lead = {
       ...newLead,
-      id: `ld-${String(leads.length + 1).padStart(3, '0')}`,
+      id: newId,
       status: 'new',
       assignedTo: 'Arjun Mehta',
       createdAt: new Date().toISOString().split('T')[0],
     };
+    
     setLeads((prev) => [lead, ...prev]);
+
+    try {
+      const { error } = await supabase
+        .from('leads')
+        .insert([toSnakeCase(lead)]);
+      if (error) throw error;
+    } catch (err) {
+      console.error('Error adding lead:', err);
+      setLeads((prev) => prev.filter((l) => l.id !== newId));
+    }
   }
 
   return (
@@ -239,7 +283,7 @@ export default function LeadsPage() {
               <SelectContent className="bg-slate-900 border-slate-700">
                 <SelectItem value="all">All Centers</SelectItem>
                 {centers.map((c) => (
-                  <SelectItem key={c.id} value={c.name}>
+                  <SelectItem key={c.id} value={c.id}>
                     {c.name}
                   </SelectItem>
                 ))}
@@ -356,7 +400,7 @@ export default function LeadsPage() {
                     {formatFullCurrency(lead.value)}
                   </TableCell>
                   <TableCell className="text-slate-400 text-xs max-w-[140px] truncate">
-                    {lead.center}
+                    {centers.find((c) => c.id === lead.center)?.name || lead.center}
                   </TableCell>
                   <TableCell className="text-slate-500 text-xs">{lead.createdAt}</TableCell>
                   <TableCell className="text-right">
@@ -442,7 +486,7 @@ function AddLeadDialog({ onClose, onAdd }: { onClose: () => void; onAdd: (lead: 
       phone,
       company,
       source: source as any,
-      center: centers.find((c) => c.name === center || c.id === center)?.name || center,
+      center,
       value: parseFloat(value) || 0,
       notes: 'Manually added via pipeline.',
     });
@@ -526,7 +570,7 @@ function AddLeadDialog({ onClose, onAdd }: { onClose: () => void; onAdd: (lead: 
               </SelectTrigger>
               <SelectContent className="bg-slate-900 border-slate-700">
                 {centers.map((c) => (
-                  <SelectItem key={c.id} value={c.name}>
+                  <SelectItem key={c.id} value={c.id}>
                     {c.name}
                   </SelectItem>
                 ))}

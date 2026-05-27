@@ -41,6 +41,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import supabase, { toCamelCase, toSnakeCase } from '@/lib/supabase';
 
 // --- Types ---
 type InvoiceStatus = 'draft' | 'sent' | 'paid' | 'overdue' | 'cancelled';
@@ -142,9 +143,15 @@ const statusStyles: Record<InvoiceStatus, { className: string; label: string }> 
 
 // --- Component ---
 export default function BillingPage() {
-  const [invoices, setInvoices] = React.useState<Invoice[]>(() => generateInvoices());
+  const [invoices, setInvoices] = React.useState<Invoice[]>([]);
+  const [loading, setLoading] = React.useState(true);
   const [generateOpen, setGenerateOpen] = React.useState(false);
   const [viewInvoice, setViewInvoice] = React.useState<Invoice | null>(null);
+
+  // Real data lists
+  const [clientsList, setClientsList] = React.useState<{ id: string; name: string }[]>([]);
+  const [centersList, setCentersList] = React.useState<{ id: string; name: string }[]>([]);
+  const [bookingsList, setBookingsList] = React.useState<{ id: string; clientName: string; plan: string }[]>([]);
 
   // Generate invoice form state
   const [formClient, setFormClient] = React.useState('');
@@ -154,6 +161,49 @@ export default function BillingPage() {
   const [formDueDate, setFormDueDate] = React.useState('');
   const [formCenter, setFormCenter] = React.useState('');
 
+  React.useEffect(() => {
+    async function loadData() {
+      try {
+        const { data: invData, error: invError } = await supabase
+          .from('invoices')
+          .select('*')
+          .order('created_at', { ascending: false });
+        if (invError) throw invError;
+        
+        const mapped = toCamelCase(invData || []).map((inv: any) => ({
+          id: inv.id,
+          invoiceNumber: inv.invoiceNumber,
+          client: inv.clientName,
+          center: inv.centerName,
+          amount: Number(inv.amount),
+          taxRate: inv.amount > 0 ? Math.round((inv.tax / inv.amount) * 100) : 18,
+          tax: Number(inv.tax),
+          total: Number(inv.total),
+          status: inv.status,
+          issuedDate: inv.issuedDate,
+          dueDate: inv.dueDate,
+          paidDate: inv.paidDate || undefined,
+          booking: inv.bookingId || 'Membership Plan',
+        }));
+        setInvoices(mapped);
+
+        const { data: cliData } = await supabase.from('clients').select('id, name');
+        setClientsList(cliData || []);
+
+        const { data: ctrData } = await supabase.from('centers').select('id, name');
+        setCentersList(ctrData || []);
+
+        const { data: bkData } = await supabase.from('bookings').select('id, client_name, plan');
+        setBookingsList(toCamelCase(bkData || []));
+      } catch (err) {
+        console.error('Error fetching billing data:', err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadData();
+  }, []);
+
   const stats = React.useMemo(() => {
     const totalInvoiced = invoices.reduce((sum, inv) => sum + inv.total, 0);
     const paid = invoices.filter((i) => i.status === 'paid').reduce((sum, inv) => sum + inv.total, 0);
@@ -162,21 +212,38 @@ export default function BillingPage() {
     return { totalInvoiced, paid, pending, overdue };
   }, [invoices]);
 
-  function handleMarkAsPaid(invoiceId: string) {
+  async function handleMarkAsPaid(invoiceId: string) {
+    const todayStr = new Date().toISOString().split('T')[0];
+    const oldInvoices = invoices;
+    
     setInvoices((prev) =>
       prev.map((inv) =>
         inv.id === invoiceId
           ? {
               ...inv,
               status: 'paid' as InvoiceStatus,
-              paidDate: new Date().toISOString().split('T')[0],
+              paidDate: todayStr,
             }
           : inv
       )
     );
+
+    try {
+      const { error } = await supabase
+        .from('invoices')
+        .update({
+          status: 'paid',
+          paid_date: todayStr
+        })
+        .eq('id', invoiceId);
+      if (error) throw error;
+    } catch (err) {
+      console.error('Error paying invoice:', err);
+      setInvoices(oldInvoices);
+    }
   }
 
-  function handleGenerateInvoice() {
+  async function handleGenerateInvoice() {
     if (!formClient || !formBooking || !formAmount || !formDueDate || !formCenter) return;
 
     const amount = parseFloat(formAmount);
@@ -184,11 +251,18 @@ export default function BillingPage() {
     const tax = Math.round(amount * taxRate / 100);
     const total = amount + tax;
 
+    const newId = `inv-${Date.now().toString().slice(-4)}`;
+    const invoiceNum = `NXD-2026-${String(1001 + invoices.length)}`;
+    
+    const matchedClient = clientsList.find(c => c.id === formClient);
+    const matchedCenter = centersList.find(c => c.id === formCenter);
+    const matchedBooking = bookingsList.find(b => b.id === formBooking);
+
     const newInvoice: Invoice = {
-      id: `inv-${invoices.length + 1}`,
-      invoiceNumber: `NXD-2026-${String(1001 + invoices.length)}`,
-      client: formClient,
-      center: formCenter,
+      id: newId,
+      invoiceNumber: invoiceNum,
+      client: matchedClient ? matchedClient.name : formClient,
+      center: matchedCenter ? matchedCenter.name : formCenter,
       amount,
       taxRate,
       tax,
@@ -196,11 +270,39 @@ export default function BillingPage() {
       status: 'draft',
       issuedDate: new Date().toISOString().split('T')[0],
       dueDate: formDueDate,
-      booking: formBooking,
+      booking: matchedBooking ? `${matchedBooking.plan} (${matchedBooking.id})` : formBooking,
     };
 
+    const oldInvoices = invoices;
     setInvoices((prev) => [newInvoice, ...prev]);
     setGenerateOpen(false);
+
+    try {
+      const dbInvoice = {
+        id: newId,
+        invoice_number: invoiceNum,
+        client_id: matchedClient ? matchedClient.id : null,
+        client_name: matchedClient ? matchedClient.name : formClient,
+        booking_id: matchedBooking ? matchedBooking.id : null,
+        center_id: matchedCenter ? matchedCenter.id : null,
+        center_name: matchedCenter ? matchedCenter.name : formCenter,
+        amount,
+        tax,
+        total,
+        status: 'draft',
+        issued_date: newInvoice.issuedDate,
+        due_date: formDueDate,
+      };
+
+      const { error } = await supabase
+        .from('invoices')
+        .insert([dbInvoice]);
+      if (error) throw error;
+    } catch (err) {
+      console.error('Error adding invoice to database:', err);
+      setInvoices(oldInvoices);
+    }
+
     setFormClient('');
     setFormBooking('');
     setFormAmount('');
@@ -246,8 +348,8 @@ export default function BillingPage() {
                       <SelectValue placeholder="Select client" />
                     </SelectTrigger>
                     <SelectContent className="bg-slate-800 border-white/10">
-                      {clients.map((c) => (
-                        <SelectItem key={c} value={c}>{c}</SelectItem>
+                      {clientsList.map((c) => (
+                        <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -259,8 +361,8 @@ export default function BillingPage() {
                       <SelectValue placeholder="Select center" />
                     </SelectTrigger>
                     <SelectContent className="bg-slate-800 border-white/10">
-                      {centers.map((c) => (
-                        <SelectItem key={c} value={c}>{c}</SelectItem>
+                      {centersList.map((c) => (
+                        <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -272,8 +374,8 @@ export default function BillingPage() {
                       <SelectValue placeholder="Select booking" />
                     </SelectTrigger>
                     <SelectContent className="bg-slate-800 border-white/10">
-                      {bookings.map((b) => (
-                        <SelectItem key={b} value={b}>{b}</SelectItem>
+                      {bookingsList.map((b) => (
+                        <SelectItem key={b.id} value={b.id}>{b.plan} ({b.clientName})</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>

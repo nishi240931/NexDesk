@@ -26,6 +26,7 @@ import {
   LayoutGrid,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import supabase, { toCamelCase, toSnakeCase } from '@/lib/supabase';
 
 // --- Types ---
 type SeatStatus = 'available' | 'occupied' | 'reserved' | 'maintenance';
@@ -126,13 +127,62 @@ const zoneLabels: Record<Zone, string> = {
 
 // --- Component ---
 export default function SeatsPage() {
-  const [seats, setSeats] = React.useState<Seat[]>(() => allSeats);
-  const [selectedCenter, setSelectedCenter] = React.useState(centers[0]);
+  const [centersList, setCentersList] = React.useState<{ id: string; name: string }[]>([]);
+  const [seats, setSeats] = React.useState<Seat[]>([]);
+  const [loading, setLoading] = React.useState(true);
+  const [selectedCenter, setSelectedCenter] = React.useState('');
   const [selectedFloor, setSelectedFloor] = React.useState<number>(1);
   const [statusFilter, setStatusFilter] = React.useState<SeatStatus | 'all'>('all');
   const [typeFilter, setTypeFilter] = React.useState<SeatType | 'all'>('all');
   const [zoneFilter, setZoneFilter] = React.useState<Zone | 'all'>('all');
   const [selectedSeat, setSelectedSeat] = React.useState<Seat | null>(null);
+
+  // Load centers on mount
+  React.useEffect(() => {
+    async function loadCenters() {
+      try {
+        const { data, error } = await supabase
+          .from('centers')
+          .select('id, name')
+          .order('name');
+        if (error) throw error;
+        setCentersList(data || []);
+        if (data && data.length > 0) {
+          setSelectedCenter(data[0].id);
+        }
+      } catch (err) {
+        console.error('Error fetching centers:', err);
+      }
+    }
+    loadCenters();
+  }, []);
+
+  // Fetch seats whenever center changes
+  React.useEffect(() => {
+    if (!selectedCenter) return;
+    async function loadSeats() {
+      setLoading(true);
+      try {
+        const { data, error } = await supabase
+          .from('seats')
+          .select('*')
+          .eq('center_id', selectedCenter);
+        if (error) throw error;
+        
+        // Map database response to frontend properties
+        const mapped = toCamelCase(data || []).map((s: any) => ({
+          ...s,
+          client: s.clientName || undefined
+        }));
+        setSeats(mapped);
+      } catch (err) {
+        console.error('Error fetching seats:', err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadSeats();
+  }, [selectedCenter]);
 
   const filteredSeats = React.useMemo(() => {
     return seats.filter((s) => {
@@ -163,8 +213,9 @@ export default function SeatsPage() {
     return groups;
   }, [filteredSeats]);
 
-  function handleAssignSeat(seatId: string) {
+  async function handleAssignSeat(seatId: string) {
     const randomClient = clientNames[Math.floor(Math.random() * clientNames.length)];
+    const oldSeats = seats;
     setSeats((prev) =>
       prev.map((s) =>
         s.id === seatId
@@ -173,9 +224,21 @@ export default function SeatsPage() {
       )
     );
     setSelectedSeat((prev) => prev ? { ...prev, status: 'occupied', client: randomClient } : null);
+
+    try {
+      const { error } = await supabase
+        .from('seats')
+        .update({ status: 'occupied', client_name: randomClient })
+        .eq('id', seatId);
+      if (error) throw error;
+    } catch (err) {
+      console.error('Error assigning seat:', err);
+      setSeats(oldSeats);
+    }
   }
 
-  function handleReleaseSeat(seatId: string) {
+  async function handleReleaseSeat(seatId: string) {
+    const oldSeats = seats;
     setSeats((prev) =>
       prev.map((s) =>
         s.id === seatId
@@ -184,6 +247,17 @@ export default function SeatsPage() {
       )
     );
     setSelectedSeat((prev) => prev ? { ...prev, status: 'available', client: undefined } : null);
+
+    try {
+      const { error } = await supabase
+        .from('seats')
+        .update({ status: 'available', client_name: null })
+        .eq('id', seatId);
+      if (error) throw error;
+    } catch (err) {
+      console.error('Error releasing seat:', err);
+      setSeats(oldSeats);
+    }
   }
 
   return (
@@ -206,9 +280,9 @@ export default function SeatsPage() {
                   <SelectValue placeholder="Select center" />
                 </SelectTrigger>
                 <SelectContent className="bg-slate-900 border-white/10">
-                  {centers.map((c) => (
-                    <SelectItem key={c} value={c}>
-                      {c}
+                  {centersList.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.name}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -394,7 +468,7 @@ export default function SeatsPage() {
                     Seat {selectedSeat.number}
                   </h3>
                   <p className="mt-0.5 text-sm text-slate-400">
-                    {selectedSeat.center} · Floor {selectedSeat.floor} · Zone{' '}
+                    {centersList.find((c) => c.id === selectedSeat.center)?.name || selectedSeat.center} · Floor {selectedSeat.floor} · Zone{' '}
                     {selectedSeat.zone}
                   </p>
                 </div>
